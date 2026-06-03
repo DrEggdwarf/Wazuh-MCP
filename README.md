@@ -25,7 +25,7 @@ exposé). Le MCP est **lecture seule** (aucune action d'écriture sur Wazuh).
                     Navigateur → https://localhost:8445
                                    │
                           ┌────────▼─────────┐
-                          │   proxy (nginx)  │  injecte le bouton 🤖 MCP
+                          │   proxy (nginx)  │  injecte le bouton MCP
                           └───┬──────────┬───┘
                        /      │          │   /mcp-chat
               ┌───────────────▼──┐    ┌──▼─────────────┐
@@ -50,7 +50,7 @@ exposé). Le MCP est **lecture seule** (aucune action d'écriture sur Wazuh).
 
 ## Démarrage
 ```bash
-git clone <ce-repo> && cd soc-stack
+git clone https://github.com/DrEggdwarf/Wazuh-MCP.git && cd Wazuh-MCP
 docker compose up -d --build
 ```
 Le **premier build** prend quelques minutes (compilation Rust du serveur MCP). Les
@@ -61,7 +61,7 @@ sécurité automatiquement).
 - **Point d'entrée unique : https://localhost:8445**
 - Cert auto-signé → **accepter une fois** (l'accepter aussi sur le dashboard interne n'est plus nécessaire, tout passe par 8445).
 - Login Wazuh (lab) : **`admin` / `admin`**.
-- Bouton **🤖 MCP** en bas à droite → ouvre l'assistant.
+- Bouton **MCP** en bas à droite → ouvre l'assistant.
 - **Clé LLM en BYOK** : Options (roue crantée) → colle ta clé Anthropic ou OpenAI-compatible.
   La clé reste dans ton navigateur (jamais stockée côté serveur).
 
@@ -86,7 +86,7 @@ Pour lire un fichier de logs applicatif, ajouter un `<localfile>` à l'ossec.con
 (via un `opensearch`/cont-init ou un ossec.conf monté). Après modif :
 `docker volume rm soc-stack_wazuh-manager-etc && docker compose up -d`.
 
-## Sécurité (⚠ lab)
+## Sécurité (lab)
 Identifiants de démonstration à **changer pour un usage réel** : indexeur `admin/admin`,
 API `wazuh-wui/wazuh-wui`, dashboard `admin/admin`, certs auto-signés. MCP volontairement
 **read-only** (adapté aux contextes sensibles type données de santé / RGPD).
