@@ -86,10 +86,22 @@ Pour lire un fichier de logs applicatif, ajouter un `<localfile>` à l'ossec.con
 (via un `opensearch`/cont-init ou un ossec.conf monté). Après modif :
 `docker volume rm soc-stack_wazuh-manager-etc && docker compose up -d`.
 
-## Sécurité (lab)
+## Sécurité & durcissement
+- **`/mcp-chat` protégé par la session dashboard** : le proxy valide le cookie Wazuh
+  (`auth_request`) avant d'exposer l'UI/API du chat → pas d'accès anonyme (single-login
+  conservé, le cookie est réutilisé par le bouton MCP).
+- **Anti-SSRF** : la `base_url` OpenAI-compatible fournie par le client est validée
+  (http/https + IP publique only) → impossible de pivoter vers l'indexeur/manager interne.
+- **MCP read-only** (aucune écriture sur Wazuh) + **clés LLM BYOK** (jamais côté serveur).
+- **Indexeur jamais exposé** ; `mcp-server`/`mcp-chat`/dashboard internes ; un seul port
+  publié (`8445`) + agents (`1514/1515`). `mcp-chat` tourne en **non-root**.
+- **Démarrage ordonné** par healthchecks (`depends_on: service_healthy`) + **limites
+  mémoire** par conteneur (anti-OOM).
+- **Supply-chain** : `mcp-server` épinglé à un commit upstream ; images à tag fixe.
+
 Identifiants de démonstration à **changer pour un usage réel** : indexeur `admin/admin`,
-API `wazuh-wui/wazuh-wui`, dashboard `admin/admin`, certs auto-signés. MCP volontairement
-**read-only** (adapté aux contextes sensibles type données de santé / RGPD).
+API `wazuh-wui/wazuh-wui`, dashboard `admin/admin`, certs auto-signés. Ne **jamais** exposer
+`:8445` hors du segment d'administration (le SOC n'est joignable que par le PAW analyste).
 
 ## Arborescence
 ```

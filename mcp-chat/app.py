@@ -6,8 +6,11 @@ Les clés API ne sont JAMAIS stockées (envoyées par le navigateur à chaque re
 """
 import os
 import json
+import socket
 import sqlite3
+import ipaddress
 from datetime import datetime, timezone
+from urllib.parse import urlparse
 
 import httpx
 from fastapi import FastAPI, Request
@@ -140,8 +143,36 @@ async def run_anthropic(client, h, mcp_tools, key, model, system, messages):
     return {"reply": "(arrêt : trop d'appels d'outils)", "tools_used": used}
 
 
+def validate_public_url(url):
+    """Anti-SSRF : n'autorise que http(s) vers des IP publiques (la base_url est fournie
+    par le client). Bloque loopback/privé/link-local/réservé -> empêche d'utiliser le
+    serveur comme pivot vers l'indexeur/manager du SOC. Best-effort (pas de pin DNS)."""
+    try:
+        u = urlparse(url)
+    except Exception:
+        return False, "URL invalide"
+    if u.scheme not in ("http", "https"):
+        return False, "schéma non autorisé (http/https uniquement)"
+    if not u.hostname:
+        return False, "hôte manquant"
+    port = u.port or (443 if u.scheme == "https" else 80)
+    try:
+        infos = socket.getaddrinfo(u.hostname, port, proto=socket.IPPROTO_TCP)
+    except Exception as e:
+        return False, f"résolution DNS échouée: {e}"
+    for info in infos:
+        ip = ipaddress.ip_address(info[4][0])
+        if (ip.is_private or ip.is_loopback or ip.is_link_local
+                or ip.is_reserved or ip.is_multicast or ip.is_unspecified):
+            return False, "adresse interne interdite"
+    return True, ""
+
+
 async def run_openai(client, h, mcp_tools, key, model, base_url, system, messages):
     base = (base_url or "https://api.openai.com/v1").rstrip("/")
+    ok, why = validate_public_url(base)
+    if not ok:
+        return {"error": f"base_url refusée ({why})"}
     tools = [{"type": "function", "function": {"name": t["name"], "description": t.get("description", ""), "parameters": tool_schema(t)}} for t in mcp_tools]
     oh = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
     convo = [{"role": "system", "content": system}] + [{"role": m["role"], "content": m["content"]} for m in messages]

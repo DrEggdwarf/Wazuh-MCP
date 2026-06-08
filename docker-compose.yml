@@ -6,6 +6,8 @@
 # Les certs démo bakés dans les images ont ces noms dans leurs SAN, et filebeat fait du
 # mutual-TLS vers https://wazuh.indexer:9200. Renommer casserait DNS + vérif TLS.
 #
+# Durcissement (cf. README §Sécurité) : démarrage ordonné par healthchecks, limites mémoire,
+# /mcp-chat protégé par la session dashboard (proxy), mcp-chat non-root + anti-SSRF.
 # Creds lab (jetables, à changer en prod) : indexeur admin/admin ; API manager wazuh-wui/wazuh-wui.
 services:
   wazuh.indexer:
@@ -13,6 +15,7 @@ services:
     platform: linux/amd64
     hostname: wazuh.indexer
     restart: always
+    mem_limit: 2g
     environment:
       - OPENSEARCH_JAVA_OPTS=-Xms1g -Xmx1g
     ulimits:
@@ -24,6 +27,12 @@ services:
       echo '' >> /usr/share/wazuh-indexer/config/opensearch.yml;
       echo 'plugins.security.allow_default_init_securityindex: true' >> /usr/share/wazuh-indexer/config/opensearch.yml; };
       exec /entrypoint.sh opensearchwrapper"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sk -u admin:admin https://localhost:9200/_cluster/health | grep -q '\"status\"'"]
+      interval: 20s
+      timeout: 10s
+      retries: 12
+      start_period: 90s
     volumes:
       - wazuh-indexer-data:/var/lib/wazuh-indexer
 
@@ -32,6 +41,7 @@ services:
     platform: linux/amd64
     hostname: wazuh.manager
     restart: always
+    mem_limit: 1g
     ports:
       - "1514:1514/udp"     # agents
       - "1515:1515/tcp"
@@ -51,7 +61,8 @@ services:
       retries: 8
       start_period: 60s
     depends_on:
-      - wazuh.indexer
+      wazuh.indexer:
+        condition: service_healthy
     volumes:
       - wazuh-manager-data:/var/ossec/data
       - wazuh-manager-logs:/var/ossec/logs
@@ -64,6 +75,7 @@ services:
     platform: linux/amd64
     hostname: wazuh.dashboard
     restart: always
+    mem_limit: 1g
     # accès via le reverse-proxy (service "proxy") -> https://localhost:8445
     expose:
       - "5601"
@@ -77,15 +89,24 @@ services:
       # creds indexeur pour le dashboard (keystore)
       - DASHBOARD_USERNAME=kibanaserver
       - DASHBOARD_PASSWORD=kibanaserver
+    healthcheck:
+      test: ["CMD-SHELL","curl -sk -o /dev/null -w '%{http_code}' https://localhost:5601/app/login | grep -q 200"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 120s
     depends_on:
-      - wazuh.manager
-      - wazuh.indexer
+      wazuh.indexer:
+        condition: service_healthy
+      wazuh.manager:
+        condition: service_healthy
 
   mcp-server:
     build: ./mcp-server                  # build depuis les sources gbrigandi (auto-suffisant)
     image: soc-stack/mcp-server
     hostname: mcp-server
     restart: unless-stopped
+    mem_limit: 256m
     expose:
       - "8000"                           # interne uniquement (joint par le chat via mcp-server:8000)
     environment:
@@ -107,8 +128,16 @@ services:
       - VERIFY_SSL=false
       - MCP_SERVER_PORT=8000
       - RUST_LOG=info
+    healthcheck:
+      # image slim (bash only) : on valide que le port HTTP écoute
+      test: ["CMD-SHELL","timeout 3 bash -c '</dev/tcp/localhost/8000'"]
+      interval: 20s
+      timeout: 5s
+      retries: 8
+      start_period: 20s
     depends_on:
-      - wazuh.manager
+      wazuh.manager:
+        condition: service_healthy
 
   # --- Chat léger SOC : BYOK, sans compte, boucle outils MCP Wazuh + Anthropic ---
   mcp-chat:
@@ -116,15 +145,23 @@ services:
     image: soc-stack/mcp-chat
     hostname: mcp-chat
     restart: unless-stopped
+    mem_limit: 256m
     environment:
       - MCP_URL=http://mcp-server:8000/mcp
       - DB_PATH=/data/soc.db
+    healthcheck:
+      test: ["CMD-SHELL","python3 -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8001/health',timeout=5).status==200 else 1)\""]
+      interval: 20s
+      timeout: 5s
+      retries: 8
+      start_period: 15s
     expose:
       - "8001"
     volumes:
       - mcp-chat-data:/data        # historique conversations (SQLite)
     depends_on:
-      - mcp-server
+      mcp-server:
+        condition: service_healthy
 
   # --- Reverse-proxy : 1 point d'entrée https (portail = dashboard + chat MCP inline) ---
   proxy:
@@ -132,13 +169,16 @@ services:
     image: soc-stack/proxy
     hostname: proxy
     restart: always
+    mem_limit: 64m
     ports:
       # POINT D'ENTRÉE UNIQUE. Hôte 8445 (8443 est déjà pris par le forward NAT VMware
       # vers l'OVA Wazuh -> conflit : le navigateur tombait sur l'OVA, sans injection).
       - "8445:8443"
     depends_on:
-      - wazuh.dashboard
-      - mcp-chat
+      wazuh.dashboard:
+        condition: service_healthy
+      mcp-chat:
+        condition: service_healthy
 
 volumes:
   wazuh-indexer-data:
